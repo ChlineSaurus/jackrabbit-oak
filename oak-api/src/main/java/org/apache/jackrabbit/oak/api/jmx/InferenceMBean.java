@@ -37,4 +37,11 @@ public interface InferenceMBean {
      * Get the inference configuration as a Json string.
      */
     String getConfigNodeStateJson();
+
+    /**
+     * @param path
+     * @param json
+     * @return
+     */
+    void setConfigJson(String path, String json);
 }
