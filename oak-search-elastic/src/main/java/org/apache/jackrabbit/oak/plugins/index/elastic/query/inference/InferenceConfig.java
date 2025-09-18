@@ -19,6 +19,7 @@
 package org.apache.jackrabbit.oak.plugins.index.elastic.query.inference;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.commons.json.JsopBuilder;
 import org.apache.jackrabbit.oak.json.JsonUtils;
@@ -30,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -171,11 +173,11 @@ public class InferenceConfig {
                 InferenceIndexConfig inferenceIndexConfig;
                 IndexName indexNameObject;
                 Function<String, InferenceIndexConfig> getInferenceIndexConfig = (iName) ->
-                    getIndexConfigs().getOrDefault(iName, InferenceIndexConfig.NOOP);
+                        getIndexConfigs().getOrDefault(iName, InferenceIndexConfig.NOOP);
                 if (!InferenceIndexConfig.NOOP.equals(inferenceIndexConfig = getInferenceIndexConfig.apply(indexName))) {
                     LOG.debug("InferenceIndexConfig for indexName: {} is: {}", indexName, inferenceIndexConfig);
                 } else if ((indexNameObject = IndexName.parse(indexName)) != null && indexNameObject.isLegal()
-                    && indexNameObject.getBaseName() != null
+                        && indexNameObject.getBaseName() != null
                 ) {
                     LOG.debug("InferenceIndexConfig is using baseIndexName {} and is: {}", indexNameObject.getBaseName(), inferenceIndexConfig);
                     inferenceIndexConfig = getInferenceIndexConfig.apply(indexNameObject.getBaseName());
@@ -242,11 +244,23 @@ public class InferenceConfig {
         }
     }
 
+    public void replaceAndReInitializeConfigJson(String path, String jsonConfig, boolean isInferenceEnabled) {
+        try {
+            LOG.info("Setting new InferenceConfig to {} with Content {}", path, jsonConfig);
+            JsonUtils.addOrReplace(nodeStore, path, InferenceConfig.TYPE, jsonConfig);
+            InferenceConfig.reInitialize(nodeStore, path, isInferenceEnabled);
+        } catch (CommitFailedException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private @NotNull Map<String, InferenceIndexConfig> getIndexConfigs() {
         lock.readLock().lock();
         try {
             return isEnabled() ?
-                Collections.unmodifiableMap(indexConfigs) : Map.of();
+                    Collections.unmodifiableMap(indexConfigs) : Map.of();
         } finally {
             lock.readLock().unlock();
         }
@@ -280,13 +294,13 @@ public class InferenceConfig {
     @Override
     public String toString() {
         JsopBuilder builder = new JsopBuilder().object().
-            key("type").value(TYPE).
-            key("enabled").value(enabled).
-            key("inferenceConfigPath").value(inferenceConfigPath).
-            key("currentInferenceConfig").value(currentInferenceConfig).
-            key("activeInferenceConfig").value(activeInferenceConfig).
-            key("isInferenceEnabled").value(isInferenceEnabled).
-            key("indexConfigs").object();
+                key("type").value(TYPE).
+                key("enabled").value(enabled).
+                key("inferenceConfigPath").value(inferenceConfigPath).
+                key("currentInferenceConfig").value(currentInferenceConfig).
+                key("activeInferenceConfig").value(activeInferenceConfig).
+                key("isInferenceEnabled").value(isInferenceEnabled).
+                key("indexConfigs").object();
         // Serialize each index config
         for (Map.Entry<String, InferenceIndexConfig> e : indexConfigs.entrySet()) {
             builder.key(e.getKey()).encodedValue(e.getValue().toString());
@@ -296,4 +310,4 @@ public class InferenceConfig {
         builder.key(":enrich").encodedValue(enricherStatus.toString()).endObject();
         return JsopBuilder.prettyPrint(builder.toString());
     }
-} 
+}

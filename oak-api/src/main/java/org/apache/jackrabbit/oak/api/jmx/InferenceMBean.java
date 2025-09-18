@@ -39,9 +39,18 @@ public interface InferenceMBean {
     String getConfigNodeStateJson();
 
     /**
-     * @param path
-     * @param json
+     * @param path               path where to save the inferenceConfig
+     * @param jsonConfig         inferenceConfig in the form of a JSON
+     * @param isInferenceEnabled if the inference should be enabled
      * @return
      */
-    void setConfigJson(String path, String json);
+    void setConfigJson(@Name("path")
+                       @Description("Path where to be saved")
+                       String path,
+                       @Name("jsonConfig")
+                       @Description("inferenceConfig in the form of a JSON")
+                       String jsonConfig,
+                       @Name("isInferenceEnabled")
+                       @Description("Flag defining if the inference config should be enabled")
+                       boolean isInferenceEnabled);
 }

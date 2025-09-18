@@ -237,7 +237,7 @@ public class JsonUtils {
         return validateJson(reader, isJsonArray);
     }
 
-    public static boolean addOrReplace(NodeStore nodeStore, String targetPath, String nodeType, String jsonString) throws CommitFailedException, IOException {
+    public static void addOrReplace(NodeStore nodeStore, String targetPath, String nodeType, String jsonString) throws CommitFailedException, IOException {
         LOG.info("Storing {}: {}", targetPath, jsonString);
         JsonObject json = JsonObject.fromJson(jsonString, true);
         NodeBuilder root = nodeStore.getRoot().builder();
@@ -254,100 +254,6 @@ public class JsonUtils {
         }
         storeConfigNode(nodeStore, builder, nodeType, json);
         nodeStore.merge(root, EmptyHook.INSTANCE, CommitInfo.EMPTY);
-        return true;
-    }
-
-    public static void storeConfigNode(NodeStore nodeStore, NodeBuilder builder, String nodeType, JsonObject json) throws IOException {
-        for (Entry<String, JsonObject> e : json.getChildren().entrySet()) {
-            String k = e.getKey();
-            JsonObject v = e.getValue();
-            storeConfigNode(nodeStore, builder.child(k), nodeType, v);
-        }
-        for (String child : builder.getChildNodeNames()) {
-            if (!json.getChildren().containsKey(child)) {
-                builder.child(child).remove();
-            }
-        }
-        for (Entry<String, String> e : json.getProperties().entrySet()) {
-            String k = e.getKey();
-            String v = e.getValue();
-            storeConfigProperty(nodeStore, builder, k, v);
-        }
-        if (!json.getProperties().containsKey("jcr:primaryType")) {
-            builder.setProperty("jcr:primaryType", nodeType, Type.NAME);
-        }
-        for (PropertyState prop : builder.getProperties()) {
-            if ("jcr:primaryType".equals(prop.getName())) {
-                continue;
-            }
-            if (!json.getProperties().containsKey(prop.getName())) {
-                builder.removeProperty(prop.getName());
-            }
-        }
-        if ("nt:resource".equals(DiffIndexMerger.oakStringValue(json, "jcr:primaryType"))) {
-            if (!json.getProperties().containsKey("jcr:uuid")) {
-                String uuid = UUID.randomUUID().toString();
-                builder.setProperty("jcr:uuid", uuid);
-            }
-        }
-    }
-
-    public static void storeConfigProperty(NodeStore nodeStore, NodeBuilder builder, String propertyName, String value) throws IOException {
-        if (value.startsWith("\"")) {
-            // string or blob
-            value = JsopTokenizer.decodeQuoted(value);
-            if (value.startsWith(":blobId:")) {
-                String base64 = value.substring(":blobId:".length());
-                byte[] bytes = Base64.getDecoder().decode(base64.getBytes(StandardCharsets.UTF_8));
-                Blob blob = nodeStore.createBlob(new ByteArrayInputStream(bytes));
-                builder.setProperty(propertyName, blob);
-            } else {
-                if ("jcr:primaryType".equals(propertyName)) {
-                    builder.setProperty(propertyName, value, Type.NAME);
-                } else {
-                    builder.setProperty(propertyName, value);
-                }
-            }
-        } else if (value.indexOf('.') >= 0) {
-            // double
-            try {
-                Double d = Double.parseDouble(value);
-                builder.setProperty(propertyName, d);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Could not parse double " + value);
-            }
-        } else if (value.equals("null")) {
-            throw new IllegalArgumentException("Removing entries is not supported");
-        } else if (value.equals("true")) {
-            builder.setProperty(propertyName, true);
-        } else if (value.equals("false")) {
-            builder.setProperty(propertyName, false);
-        } else if (value.startsWith("-") || (!value.isEmpty() && Character.isDigit(value.charAt(0)))) {
-            // long
-            try {
-                Long x = Long.parseLong(value);
-                builder.setProperty(propertyName, x);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Could not parse long " + value);
-            }
-        } else if (value.startsWith("[")) {
-            JsopTokenizer tokenizer = new JsopTokenizer(value);
-            TreeSet<String> result = new TreeSet<>();
-            tokenizer.matches('[');
-            if (!tokenizer.matches(']')) {
-                do {
-                    if (!tokenizer.matches(JsopReader.STRING)) {
-                        throw new IllegalArgumentException("Could not process string array " + value);
-                    }
-                    result.add(tokenizer.getEscapedToken());
-                } while (tokenizer.matches(','));
-                tokenizer.read(']');
-            }
-            tokenizer.read(JsopReader.END);
-            builder.setProperty(propertyName, result, Type.STRINGS);
-        } else {
-            throw new IllegalArgumentException("Unsupported value " + value);
-        }
     }
 
     private static boolean validateJson(JsopReader reader, boolean isJsonArray) {
@@ -415,5 +321,122 @@ public class JsonUtils {
             default:
                 return false;
         }
+    }
+
+    private static void storeConfigNode(NodeStore nodeStore, NodeBuilder builder, String nodeType, JsonObject json) throws IOException {
+        for (Entry<String, JsonObject> e : json.getChildren().entrySet()) {
+            String k = e.getKey();
+            JsonObject v = e.getValue();
+            storeConfigNode(nodeStore, builder.child(k), nodeType, v);
+        }
+        for (String child : builder.getChildNodeNames()) {
+            if (!json.getChildren().containsKey(child)) {
+                builder.child(child).remove();
+            }
+        }
+        for (Entry<String, String> e : json.getProperties().entrySet()) {
+            String k = e.getKey();
+            String v = e.getValue();
+            storeConfigProperty(nodeStore, builder, k, v);
+        }
+        if (!json.getProperties().containsKey("jcr:primaryType")) {
+            builder.setProperty("jcr:primaryType", nodeType, Type.NAME);
+        }
+        for (PropertyState prop : builder.getProperties()) {
+            if ("jcr:primaryType".equals(prop.getName())) {
+                continue;
+            }
+            if (!json.getProperties().containsKey(prop.getName())) {
+                builder.removeProperty(prop.getName());
+            }
+        }
+        if ("nt:resource".equals(JsonUtils.oakStringValue(json, "jcr:primaryType"))) {
+            if (!json.getProperties().containsKey("jcr:uuid")) {
+                String uuid = UUID.randomUUID().toString();
+                builder.setProperty("jcr:uuid", uuid);
+            }
+        }
+    }
+
+    private static void storeConfigProperty(NodeStore nodeStore, NodeBuilder builder, String propertyName, String value) throws IOException {
+        if (value.startsWith("\"")) {
+            // string or blob
+            value = JsopTokenizer.decodeQuoted(value);
+            if (value.startsWith(":blobId:")) {
+                String base64 = value.substring(":blobId:".length());
+                byte[] bytes = Base64.getDecoder().decode(base64.getBytes(StandardCharsets.UTF_8));
+                Blob blob;
+                blob = nodeStore.createBlob(new ByteArrayInputStream(bytes));
+                builder.setProperty(propertyName, blob);
+            } else {
+                if ("jcr:primaryType".equals(propertyName)) {
+                    builder.setProperty(propertyName, value, Type.NAME);
+                } else {
+                    builder.setProperty(propertyName, value);
+                }
+            }
+        } else if (value.equals("null")) {
+            throw new IllegalArgumentException("Removing entries is not supported");
+        } else if (value.equals("true")) {
+            builder.setProperty(propertyName, true);
+        } else if (value.equals("false")) {
+            builder.setProperty(propertyName, false);
+        } else if (value.startsWith("[")) {
+            JsopTokenizer tokenizer = new JsopTokenizer(value);
+            ArrayList<String> result = new ArrayList<>();
+            tokenizer.matches('[');
+            if (!tokenizer.matches(']')) {
+                do {
+                    if (!tokenizer.matches(JsopReader.STRING)) {
+                        throw new IllegalArgumentException("Could not process string array " + value);
+                    }
+                    result.add(tokenizer.getEscapedToken());
+                } while (tokenizer.matches(','));
+                tokenizer.read(']');
+            }
+            tokenizer.read(JsopReader.END);
+            builder.setProperty(propertyName, result, Type.STRINGS);
+        } else if (value.indexOf('.') >= 0 || value.toLowerCase().indexOf("e") >= 0) {
+            // double
+            try {
+                Double d = Double.parseDouble(value);
+                builder.setProperty(propertyName, d);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Could not parse double " + value);
+            }
+        } else if (value.startsWith("-") || (!value.isEmpty() && Character.isDigit(value.charAt(0)))) {
+            // long
+            try {
+                Long x = Long.parseLong(value);
+                builder.setProperty(propertyName, x);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Could not parse long " + value);
+            }
+        } else {
+            throw new IllegalArgumentException("Unsupported value " + value);
+        }
+    }
+
+    static String oakStringValue(JsonObject json, String propertyName) {
+        String value = json.getProperties().get(propertyName);
+        if (value == null) {
+            return null;
+        }
+        return oakStringValue(value);
+    }
+
+    static String oakStringValue(String value) {
+        if (!value.startsWith("\"")) {
+            // support numbers
+            return value;
+        }
+        value = JsopTokenizer.decodeQuoted(value);
+        if (value.startsWith(":blobId:")) {
+            value = value.substring(":blobId:".length());
+            value = new String(Base64.getDecoder().decode(value.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+        } else if (value.startsWith("str:") || value.startsWith("nam:") || value.startsWith("dat:")) {
+            value = value.substring("str:".length());
+        }
+        return value;
     }
 }
