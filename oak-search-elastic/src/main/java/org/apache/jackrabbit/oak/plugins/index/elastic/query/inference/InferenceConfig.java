@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.commons.json.JsopBuilder;
+import org.apache.jackrabbit.oak.json.JsonNodeBuilder;
 import org.apache.jackrabbit.oak.json.JsonUtils;
 import org.apache.jackrabbit.oak.plugins.index.IndexName;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
@@ -244,15 +245,16 @@ public class InferenceConfig {
         }
     }
 
-    public void replaceAndReInitializeConfigJson(String path, String jsonConfig, boolean isInferenceEnabled) {
+    public static void replaceAndReInitializeConfigJson(String path, String jsonConfig) {
+        lock.writeLock().lock();
         try {
-            LOG.info("Setting new InferenceConfig to {} with Content {}", path, jsonConfig);
-            JsonUtils.addOrReplace(nodeStore, path, InferenceConfig.TYPE, jsonConfig);
-            InferenceConfig.reInitialize(nodeStore, path, isInferenceEnabled);
-        } catch (CommitFailedException e) {
+            LOG.debug("Setting new InferenceConfig to path='{}' with content={}", path, jsonConfig);
+            JsonNodeBuilder.addOrReplace(INSTANCE.nodeStore, path, TYPE, jsonConfig);
+            InferenceConfig.reInitialize(INSTANCE.nodeStore, INSTANCE.statisticsProvider, path, INSTANCE.isInferenceEnabled, true);
+        } catch (CommitFailedException | IOException e) {
             throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 

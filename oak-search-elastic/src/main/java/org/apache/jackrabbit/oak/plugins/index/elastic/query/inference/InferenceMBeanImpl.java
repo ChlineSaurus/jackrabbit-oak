@@ -54,7 +54,7 @@ public class InferenceMBeanImpl extends AnnotatedStandardMBean implements Infere
     }
 
     @Override
-    public void setConfigJson(String path, String json, boolean isInferenceEnabled) {
-        InferenceConfig.getInstance().replaceAndReInitializeConfigJson(path, json, isInferenceEnabled);
+    public void setConfigJson(String path, String json) {
+        InferenceConfig.replaceAndReInitializeConfigJson(path, json);
     }
 }
