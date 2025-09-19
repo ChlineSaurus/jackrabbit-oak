@@ -18,26 +18,15 @@
  */
 package org.apache.jackrabbit.oak.plugins.index.elastic.query.inference;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.api.jmx.InferenceMBean;
 import org.apache.jackrabbit.oak.commons.jmx.AnnotatedStandardMBean;
-import org.apache.jackrabbit.oak.json.JsonUtils;
-import org.apache.jackrabbit.oak.plugins.index.elastic.ElasticIndexProviderService;
-import org.jetbrains.annotations.NotNull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.util.Objects;
 
 /**
  * An MBean that provides the inference configuration.
  */
 public class InferenceMBeanImpl extends AnnotatedStandardMBean implements InferenceMBean {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Logger LOG = LoggerFactory.getLogger(InferenceMBeanImpl.class.getName());
 
     public InferenceMBeanImpl() {
         super(InferenceMBean.class);
@@ -54,7 +43,7 @@ public class InferenceMBeanImpl extends AnnotatedStandardMBean implements Infere
     }
 
     @Override
-    public void setConfigJson(String path, String json) {
-        InferenceConfig.replaceAndReInitializeConfigJson(path, json);
+    public void setConfigJson(String path, String configJson) {
+        InferenceConfig.updateAndReInitializeConfigJson(path, configJson);
     }
 }

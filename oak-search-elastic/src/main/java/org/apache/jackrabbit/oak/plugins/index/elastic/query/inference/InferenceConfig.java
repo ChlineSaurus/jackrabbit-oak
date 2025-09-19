@@ -174,11 +174,11 @@ public class InferenceConfig {
                 InferenceIndexConfig inferenceIndexConfig;
                 IndexName indexNameObject;
                 Function<String, InferenceIndexConfig> getInferenceIndexConfig = (iName) ->
-                        getIndexConfigs().getOrDefault(iName, InferenceIndexConfig.NOOP);
+                    getIndexConfigs().getOrDefault(iName, InferenceIndexConfig.NOOP);
                 if (!InferenceIndexConfig.NOOP.equals(inferenceIndexConfig = getInferenceIndexConfig.apply(indexName))) {
                     LOG.debug("InferenceIndexConfig for indexName: {} is: {}", indexName, inferenceIndexConfig);
                 } else if ((indexNameObject = IndexName.parse(indexName)) != null && indexNameObject.isLegal()
-                        && indexNameObject.getBaseName() != null
+                    && indexNameObject.getBaseName() != null
                 ) {
                     LOG.debug("InferenceIndexConfig is using baseIndexName {} and is: {}", indexNameObject.getBaseName(), inferenceIndexConfig);
                     inferenceIndexConfig = getInferenceIndexConfig.apply(indexNameObject.getBaseName());
@@ -245,7 +245,13 @@ public class InferenceConfig {
         }
     }
 
-    public static void replaceAndReInitializeConfigJson(String path, String jsonConfig) {
+    /**
+    * Updates the inference configuration with the provided JSON in the node store and reInitializes this class.
+    *
+    * @param path The node path where the configuration should be stored.
+    * @param jsonConfig The inferenceConfig as a JSON sting.
+    */
+    public static void updateAndReInitializeConfigJson(String path, String jsonConfig) {
         lock.writeLock().lock();
         try {
             LOG.debug("Setting new InferenceConfig to path='{}' with content={}", path, jsonConfig);
@@ -262,7 +268,7 @@ public class InferenceConfig {
         lock.readLock().lock();
         try {
             return isEnabled() ?
-                    Collections.unmodifiableMap(indexConfigs) : Map.of();
+                Collections.unmodifiableMap(indexConfigs) : Map.of();
         } finally {
             lock.readLock().unlock();
         }
@@ -296,13 +302,13 @@ public class InferenceConfig {
     @Override
     public String toString() {
         JsopBuilder builder = new JsopBuilder().object().
-                key("type").value(TYPE).
-                key("enabled").value(enabled).
-                key("inferenceConfigPath").value(inferenceConfigPath).
-                key("currentInferenceConfig").value(currentInferenceConfig).
-                key("activeInferenceConfig").value(activeInferenceConfig).
-                key("isInferenceEnabled").value(isInferenceEnabled).
-                key("indexConfigs").object();
+            key("type").value(TYPE).
+            key("enabled").value(enabled).
+            key("inferenceConfigPath").value(inferenceConfigPath).
+            key("currentInferenceConfig").value(currentInferenceConfig).
+            key("activeInferenceConfig").value(activeInferenceConfig).
+            key("isInferenceEnabled").value(isInferenceEnabled).
+            key("indexConfigs").object();
         // Serialize each index config
         for (Map.Entry<String, InferenceIndexConfig> e : indexConfigs.entrySet()) {
             builder.key(e.getKey()).encodedValue(e.getValue().toString());

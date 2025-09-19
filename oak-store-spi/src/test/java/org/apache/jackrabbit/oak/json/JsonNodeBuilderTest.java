@@ -130,7 +130,6 @@ public class JsonNodeBuilderTest {
             IllegalStateException.class,
             () -> JsonNodeBuilder.addOrReplace(ns, "/test", "invalid/nodetype", simpleJson)
         );
-        
         assertEquals("Illegal node type: invalid/nodetype", exception.getMessage());
     }
 
@@ -142,7 +141,6 @@ public class JsonNodeBuilderTest {
             IllegalArgumentException.class,
             () -> JsonNodeBuilder.addOrReplace(ns, "/test", "nt:unstructured", jsonWithNull)
         );
-        
         assertEquals("Removing entries is not supported", exception.getMessage());
     }
 }

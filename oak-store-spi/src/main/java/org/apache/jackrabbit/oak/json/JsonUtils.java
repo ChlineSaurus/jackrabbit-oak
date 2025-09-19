@@ -34,14 +34,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 public class JsonUtils {
 
     private static final ObjectMapper mapper = new ObjectMapper();
-
-    private static final Logger LOG = LoggerFactory.getLogger(JsonUtils.class);
 
     /**
      * Convert a NodeState to a Map representation
