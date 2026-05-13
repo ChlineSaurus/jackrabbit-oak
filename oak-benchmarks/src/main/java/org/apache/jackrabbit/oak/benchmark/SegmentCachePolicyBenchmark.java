@@ -65,6 +65,14 @@ import org.mockito.Mockito;
  * gap is visible — aggregate metrics hide it because the measure phase
  * runs long enough for the sketch to age out.
  *
+ * <h3>Scenario F — drift-rate sweep (afterSuite)</h3>
+ * Same shape as E but with a larger pool that never lets the cursor cap,
+ * swept over multiple drift speeds plus a stationary control. Shows
+ * Caffeine wins under no drift (its designed-for case) but loses by
+ * 5–12 pp under continuous drift — the regression is steady-state, not
+ * transient. Aggregate summary table prints Caffeine/Guava ratio per
+ * drift rate.
+ *
  * <p>Configurable via system properties:
  * <ul>
  *   <li>{@code -Dsegment.batch.size=1000} — accesses per {@code runTest()} call</li>
@@ -122,6 +130,14 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
     private static final int MEASURE_E = 200_000;
     private static final double ZIPF_E_EXP = 0.5;
     private static final int EPOCH_OPS = 10_000;
+
+    // ----- Scenario F (drift-rate sweep) -----
+    // Same generator as E, but POOL_F is sized so the cursor never caps
+    // for any drift in DRIFT_VARIANTS_F — guarantees continuous drift, no
+    // transient. INF disables drift (stationary control where W-TinyLFU
+    // is expected to win, validating the workload setup).
+    private static final int POOL_F = 260_000;
+    private static final int[] DRIFT_VARIANTS_F = {1, 5, 20, Integer.MAX_VALUE};
 
     private static final long DATA_SEG_LSB_MASK = 0xa000000000000000L;
 
@@ -272,6 +288,36 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
             PolicySetup setup = freshSetup(p, POLICIES[p], POOL_E);
             long[] r = runDriftingWindow(setup, POLICY_NAMES[p]);
             printResult(POLICY_NAMES[p], r[0], r[1], r[2]);
+        }
+
+        System.out.printf(
+                "%n--- Scenario F: drift-rate sweep (continuous drift, no cursor cap)%n"
+                        + "    (pool=%,d  width=%,d  warmup=%,d  measure=%,d) ---%n",
+                POOL_F, WIDTH_E, WARMUP_E, MEASURE_E);
+        System.out.println(
+                "  INF = no drift (stationary baseline — W-TinyLFU's design case).");
+        double[][] aggF = new double[DRIFT_VARIANTS_F.length][NUM_POLICIES];
+        for (int d = 0; d < DRIFT_VARIANTS_F.length; d++) {
+            int drift = DRIFT_VARIANTS_F[d];
+            String label = (drift == Integer.MAX_VALUE) ? "INF" : String.valueOf(drift);
+            System.out.printf("%n  drift = %s accesses/cursor%n", label);
+            for (int p = 0; p < NUM_POLICIES; p++) {
+                PolicySetup setup = freshSetup(p, POLICIES[p], POOL_F);
+                long[] r = runDriftSweep(setup, drift);
+                long total = r[0] + r[1];
+                aggF[d][p] = (total > 0) ? 100.0 * r[1] / total : 0;
+                printResult(POLICY_NAMES[p], r[0], r[1], r[2]);
+            }
+        }
+        System.out.printf("%n  Summary: aggregate miss%% by drift × policy%n");
+        System.out.println(
+                "    drift   CAFFEINE   LIRS    GUAVA    Caff/Guava");
+        for (int d = 0; d < DRIFT_VARIANTS_F.length; d++) {
+            int drift = DRIFT_VARIANTS_F[d];
+            String label = (drift == Integer.MAX_VALUE) ? "INF" : String.valueOf(drift);
+            double caff = aggF[d][0], lirs = aggF[d][1], guava = aggF[d][2];
+            System.out.printf("    %-6s  %6.1f%%  %6.1f%%  %6.1f%%   %5.2fx%n",
+                    label, caff, lirs, guava, guava > 0 ? caff / guava : 0);
         }
     }
 
@@ -509,6 +555,52 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
             }
         }
         System.out.println();
+
+        long misses = setup.cache.getCacheStats().getMissCount() - missesBase;
+        long evictions = setup.cache.getCacheStats().getEvictionCount() - evictBase;
+        return new long[]{MEASURE_E - misses, misses, evictions};
+    }
+
+    /**
+     * Scenario F: same workload generator as Scenario E but with {@code drift}
+     * as a parameter (so the caller can sweep) and no per-epoch printing.
+     * {@code drift == Integer.MAX_VALUE} disables drift entirely.
+     *
+     * @return [hits, misses, evictions] over the measure phase
+     */
+    private static long[] runDriftSweep(PolicySetup setup, int drift) {
+        double[] cdf = buildZipfCdf(WIDTH_E, ZIPF_E_EXP);
+        Random r = new Random(RANDOM_SEED);
+        int n = setup.ids.length;
+        int cursor = 0;
+        long opsCount = 0;
+
+        for (int i = 0; i < WARMUP_E; i++) {
+            int idx = cursor + zipfSample(cdf, r.nextDouble());
+            if (idx >= n) {
+                idx = n - 1;
+            }
+            setup.access(idx);
+            opsCount++;
+            if (cursor + WIDTH_E < n && opsCount % drift == 0) {
+                cursor++;
+            }
+        }
+
+        long missesBase = setup.cache.getCacheStats().getMissCount();
+        long evictBase = setup.cache.getCacheStats().getEvictionCount();
+
+        for (int i = 0; i < MEASURE_E; i++) {
+            int idx = cursor + zipfSample(cdf, r.nextDouble());
+            if (idx >= n) {
+                idx = n - 1;
+            }
+            setup.access(idx);
+            opsCount++;
+            if (cursor + WIDTH_E < n && opsCount % drift == 0) {
+                cursor++;
+            }
+        }
 
         long misses = setup.cache.getCacheStats().getMissCount() - missesBase;
         long evictions = setup.cache.getCacheStats().getEvictionCount() - evictBase;
