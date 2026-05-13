@@ -55,6 +55,16 @@ import org.mockito.Mockito;
  * Working-set entries start at freq=0 and must beat the scan baseline to enter
  * main space.  Demonstrates the admission penalty in W-TinyLFU vs LRU.
  *
+ * <h3>Scenario E — drifting working set (afterSuite)</h3>
+ * An "active range" of {@code WIDTH_E} entries slides forward across a
+ * larger pool; each entry is briefly hot then cold forever. Models the
+ * AEM publish-tier shape produced by public crawlers / daily news cycle.
+ * Caffeine's W-TinyLFU admission filter freezes the cache for the first
+ * ~5 sketch-decay periods so the early-window miss rate is materially
+ * worse than Guava LRU's. Per-epoch miss-rate output is printed so the
+ * gap is visible — aggregate metrics hide it because the measure phase
+ * runs long enough for the sketch to age out.
+ *
  * <p>Configurable via system properties:
  * <ul>
  *   <li>{@code -Dsegment.batch.size=1000} — accesses per {@code runTest()} call</li>
@@ -91,6 +101,27 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
     // Pool is 25x cache capacity; uniform access means no hot data and ~95% miss rate.
     private static final int UNIFORM_POOL_D = 25_000;
     private static final int MEASURE_D = 200_000;
+
+    // ----- Scenario E (drifting working set — the TMG production shape) -----
+    // An "active range" of WIDTH_E entries slides forward across a 20K-entry
+    // pool, shifting by 1 entry every DRIFT_E accesses. Within the active
+    // range, access is Zipfian (exponent 0.5, mild hot/long-tail). Each
+    // entry's lifetime in the active range is short and finite. After it
+    // leaves, it is never accessed again — so it has freq=1..few in the
+    // sketch and stays in cache only by recency. Caffeine's W-TinyLFU
+    // freezes its main cache with whatever was hot at warmup time, since
+    // newcomers cannot beat freq-aged incumbents (tie on freq → newcomer
+    // rejected). Hit rate craters over time. Guava LRU tracks the slide.
+    //
+    // Width 1500 > cache cap ~1000 deliberately so the cache cannot hold
+    // the entire active range — every policy is forced to choose.
+    private static final int POOL_E   = 20_000;
+    private static final int WIDTH_E  = 1_500;
+    private static final int DRIFT_E  = 5;
+    private static final int WARMUP_E = 50_000;
+    private static final int MEASURE_E = 200_000;
+    private static final double ZIPF_E_EXP = 0.5;
+    private static final int EPOCH_OPS = 10_000;
 
     private static final long DATA_SEG_LSB_MASK = 0xa000000000000000L;
 
@@ -146,7 +177,7 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
                         SegmentStore.EMPTY_STORE, msb, lsb,
                         liveCaches[p]::recordHit);
                 int memUsage = MIN_SEG_KB * 1024 + rng.nextInt((MAX_SEG_KB - MIN_SEG_KB) * 1024);
-                liveSegs[p][i] = Mockito.mock(Segment.class);
+                liveSegs[p][i] = Mockito.mock(Segment.class, Mockito.withSettings().stubOnly());
                 Mockito.when(liveSegs[p][i].getSegmentId()).thenReturn(liveIds[p][i]);
                 Mockito.when(liveSegs[p][i].estimateMemoryUsage()).thenReturn(memUsage);
             }
@@ -228,6 +259,20 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
             long[] r = runUniformRandom(setup);
             printResult(POLICY_NAMES[p], r[0], r[1], r[2]);
         }
+
+        System.out.printf(
+                "%n--- Scenario E: drifting working set — the TMG production shape%n"
+                        + "    (pool=%,d  width=%,d  drift=1 entry / %d access"
+                        + "  warmup=%,d  measure=%,d) ---%n",
+                POOL_E, WIDTH_E, DRIFT_E, WARMUP_E, MEASURE_E);
+        System.out.println(
+                "  active range slides forward; each entry briefly hot then"
+                        + " cold forever (freq decays only by Caffeine sketch aging)");
+        for (int p = 0; p < NUM_POLICIES; p++) {
+            PolicySetup setup = freshSetup(p, POLICIES[p], POOL_E);
+            long[] r = runDriftingWindow(setup, POLICY_NAMES[p]);
+            printResult(POLICY_NAMES[p], r[0], r[1], r[2]);
+        }
     }
 
     /** Miss-rate column headers for the AbstractTest output row. */
@@ -303,7 +348,7 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
                     SegmentStore.EMPTY_STORE, msb, lsb,
                     cache::recordHit);
             int memUsage = MIN_SEG_KB * 1024 + r.nextInt((MAX_SEG_KB - MIN_SEG_KB) * 1024);
-            segs[i] = Mockito.mock(Segment.class);
+            segs[i] = Mockito.mock(Segment.class, Mockito.withSettings().stubOnly());
             Mockito.when(segs[i].getSegmentId()).thenReturn(ids[i]);
             Mockito.when(segs[i].estimateMemoryUsage()).thenReturn(memUsage);
         }
@@ -393,6 +438,81 @@ public class SegmentCachePolicyBenchmark extends AbstractTest {
         long misses    = setup.cache.getCacheStats().getMissCount()     - missesBase;
         long evictions = setup.cache.getCacheStats().getEvictionCount() - evictBase;
         return new long[]{MEASURE_D - misses, misses, evictions};
+    }
+
+    /**
+     * Scenario E: drifting working set — the AEM publish-tier production
+     * shape. An active range of {@code WIDTH_E} entries slides forward by
+     * one entry every {@code DRIFT_E} accesses across a {@code POOL_E}
+     * pool. Within the range, access is mildly Zipfian; once an entry
+     * leaves the range it is never accessed again.
+     *
+     * <p>For Caffeine's W-TinyLFU this is the worst case: each newcomer
+     * has sketch freq=1 and ties with sketch-aged incumbents, so the
+     * tie-break (newcomer rejected) freezes main with whatever was hot
+     * during warmup. The cache only starts admitting fresh entries after
+     * ~5 sketch-decay periods (~50K accesses at cap≈1000). Guava LRU has
+     * no admission filter and tracks the slide.
+     *
+     * <p>Per-epoch miss-rate is printed so the early-window penalty is
+     * visible; aggregate metrics hide it because the measure phase runs
+     * long enough for Caffeine to recover.
+     *
+     * @return [hits, misses, evictions] over the measure phase
+     */
+    private static long[] runDriftingWindow(PolicySetup setup, String policyLabel) {
+        double[] cdf = buildZipfCdf(WIDTH_E, ZIPF_E_EXP);
+        Random r = new Random(RANDOM_SEED);
+        int n = setup.ids.length;
+        int cursor = 0;
+        long opsCount = 0;
+
+        // Warmup — slide is active during warmup, so the warmup phase ends
+        // with the cache in a representative steady state for each policy.
+        for (int i = 0; i < WARMUP_E; i++) {
+            int idx = cursor + zipfSample(cdf, r.nextDouble());
+            if (idx >= n) {
+                idx = n - 1;
+            }
+            setup.access(idx);
+            opsCount++;
+            if (opsCount % DRIFT_E == 0 && cursor + WIDTH_E < n) {
+                cursor++;
+            }
+        }
+
+        long missesBase = setup.cache.getCacheStats().getMissCount();
+        long evictBase = setup.cache.getCacheStats().getEvictionCount();
+
+        int numEpochs = MEASURE_E / EPOCH_OPS;
+        System.out.printf("    %-10s  per-epoch miss%% (each = %,d ops):%n    ",
+                policyLabel, EPOCH_OPS);
+        long lastMisses = missesBase;
+        for (int epoch = 0; epoch < numEpochs; epoch++) {
+            for (int i = 0; i < EPOCH_OPS; i++) {
+                int idx = cursor + zipfSample(cdf, r.nextDouble());
+                if (idx >= n) {
+                    idx = n - 1;
+                }
+                setup.access(idx);
+                opsCount++;
+                if (opsCount % DRIFT_E == 0 && cursor + WIDTH_E < n) {
+                    cursor++;
+                }
+            }
+            long cur = setup.cache.getCacheStats().getMissCount();
+            System.out.printf("%5.1f ", 100.0 * (cur - lastMisses) / EPOCH_OPS);
+            lastMisses = cur;
+            if ((epoch + 1) % 10 == 0 && epoch < numEpochs - 1) {
+                System.out.println();
+                System.out.print("    ");
+            }
+        }
+        System.out.println();
+
+        long misses = setup.cache.getCacheStats().getMissCount() - missesBase;
+        long evictions = setup.cache.getCacheStats().getEvictionCount() - evictBase;
+        return new long[]{MEASURE_E - misses, misses, evictions};
     }
 
     // -----------------------------------------------------------------------
